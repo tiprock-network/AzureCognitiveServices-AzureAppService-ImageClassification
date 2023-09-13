@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Discover Find</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./css/style.css">
+    
+</head>
+<body>
+    <div class="container">
+        <h1>Image Discover - Create Project</h1>
+        <div class="info"><p>To create a new classification project, please enter the new project name. Then use the file upload button to upload 5 to 10 images and specify the label of the group you have uploaded.</p></div>
+        <br>
+        <br>
+        <center><p><span id="total-images">0</span> File(s) Selected</p></center>
+        <div id="image-showcase"></div>
+        <br>
+        <br>
+        <form action="/create-train-project" method="POST" enctype="multipart/form-data">
+            <div class="field">
+                <input type="text" name="projName" id="projName" placeholder="new project name">
+            </div>
+
+            <div class="field">
+                <input type="text" name="projTag" id="projTag" placeholder="enter tag e.g. orange">
+            </div>
+
+            <div class="field">
+                <input type="file" name="image" id="image" multiple accept=".png, .jpg, .bmp, .jpeg" onchange="createPreview(e)">
+            </div>
+
+            <div class="field">
+                <button type="submit">Create New Project +</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('image');
+        const images = document.getElementById('image-showcase');
+        const totalImages = document.getElementById('total-images');
+        
+        // Listen to the change event on the <input> element
+        fileInput.addEventListener('change', (event) => {
+            // Get the selected image files
+            const imageFiles = event.target.files;
+            totalImages.innerText = imageFiles.length;
+            images.innerHTML = '';
+        
+            if (imageFiles.length > 0) {
+                // Loop through all the selected images
+                for (const imageFile of imageFiles) {
+                    // Check the file size (4MB limit)
+                    const maxSize = 4 * 1024 * 1024; // 4MB in bytes
+                    if (imageFile.size > maxSize) {
+                        images.innerHTML=`<center><p style="color: rgb(204, 58, 58);">${imageFile.name} exceeds the 4MB size limit. Please select a smaller file.</p></center>`;
+                        continue; // Skip this file and continue with the next one
+                    }
+        
+                    const reader = new FileReader();
+        
+                    // Convert each image file to a string
+                    reader.readAsDataURL(imageFile);
+                    reader.addEventListener('load', () => {
+                        // Create a new <img> element and add it to the DOM
+                        images.innerHTML += `
+                            <div class="image_container">
+                                <img src='${reader.result}'>
+                                <span class='image_name'>${imageFile.name}</span>
+                            </div>
+                        `;
+                    });
+                }
+            } else {
+                images.innerHTML = '';
+            }
+        });
+        
+    </script>
+</body>
+</html>

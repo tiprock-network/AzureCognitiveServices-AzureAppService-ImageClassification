@@ -2,11 +2,14 @@
 const express=require('express')
 const util=require('util')
 const fs=require('fs')
+const multer=require('multer')
 const trainAPI=require('@azure/cognitiveservices-customvision-training')
 const predAPI=require('@azure/cognitiveservices-customvision-prediction')
 const msREST=require('@azure/ms-rest-js')
 const publishIterationName="classifyGrocery"
 const setTimeOutPromise=util.promisify(setTimeout)
+const body_parser=require('body-parser')
+//const fileUpload=require('express-fileupload')
 const dotenv=require('dotenv')
 //configure environment
 dotenv.config()
@@ -19,17 +22,18 @@ const trainer=new trainAPI.TrainingAPIClient(creds,trainer_endpoint)
 const pred_creds=new msREST.ApiKeyCredentials({inHeader:{'Prediction-key':process.env.resourcePredictionKEY}})
 const pred=new predAPI.PredictionAPIClient(pred_creds,pred_endpoint)
 const rootImgFolder='./public/images'
+const upload=multer({dest:'uploads/'})
 let projectID=''
 //create express app
 const app=express()
-const userRoute=require('./routers/userRoute')
+
 
 
 //middleware
 app.set('view engine','ejs')
-
-//user route
-app.use('/account',userRoute)
+app.use(body_parser.urlencoded({extended:true}))
+//app.use(fileUpload({useTempFiles: true,}))
+app.use(express.static('public'))
 
 
 //index page
@@ -37,39 +41,49 @@ app.get('/',(req,res)=>{
     res.render('index')
 })
 
+
 //create new project
-app.get('/create-train-project', async (req,res)=>{
+app.get('/create-train-project', (req,res)=>{
+    res.render('create')
+})
+
+app.post('/create-train-project', async (req,res)=>{
+    
     try {
+        const myNewProjectName = req.body.projName;
+        const tag = req.body.projTag;
+        const imageFiles = req.files.image;
+        //import id json
+        const id_data=fs.readFileSync('id.json')
+         // Ensure that project name and tag are provided
+         if (!myNewProjectName || !tag || !imageFiles) {
+            return res.status(400).send('Project name, tag, and images are required.');
+        }
+
         console.log(`Creating project...`)
-        const project=await trainer.createProject("groceryStore")
+        const project=await trainer.createProject(`${myNewProjectName}`)
         projectID=project.id
+        //after creating project save id to id.json
+        const idsJSON=JSON.parse(id_data)
+        idsJSON.projects.push({
+            projId:projectID,
+            projName:project.name
+        })
+        fs.writeFileSync('id.json', JSON.stringify(idsJSON));
         //add tags for the pictures in the newly created project
-        const asparagusTag = await trainer.createTag(project.id, "asparagus");
-        //const tomatoTag = await trainer.createTag(project.id, "tomato");
-        const carrotTag= await trainer.createTag(project.id,"carrot")
+        const tagObj = await trainer.createTag(projectID, tag);
 
         //upload data images
         console.log('Adding images...')
 
-        let fileUploadPromises=[]
+        // Process each uploaded image
+        for (const imageFile of Array.isArray(imageFiles) ? imageFiles : [imageFiles]) {
+            const imageData = fs.readFileSync(imageFile.tempFilePath);
+
+            // Upload the image to the project with the specified tag
+            await trainer.createImagesFromData(projectID, imageData, { tagIds: [tagObj.id] });
+        }
         
-        //get the location of your files
-        const asparagus_files=fs.readdirSync(`${rootImgFolder}/asparagus`)
-        asparagus_files.forEach(file=>{
-            fileUploadPromises.push(trainer.createImagesFromData(project.id,fs.readFileSync(`${rootImgFolder}/asparagus/${file}`),{tagIds:[asparagusTag.id]}))
-        })
-
-        const carrot_files=fs.readdirSync(`${rootImgFolder}/carrot`)
-        carrot_files.forEach(file=>{
-            fileUploadPromises.push(trainer.createImagesFromData(project.id,fs.readFileSync(`${rootImgFolder}/carrot/${file}`),{tagIds:[carrotTag.id]}))
-        })
-
-        /*const tomato_files=fs.readdirSync(`${rootImgFolder}/tomato`)
-        tomato_files.forEach(file=>{
-            fileUploadPromises.push(trainer.createImagesFromData(project.id,fs.readFileSync(`${rootImgFolder}/tomato/${file}`),{tagIds:[tomatoTag.id]}))
-        })*/
-        await Promise.all(fileUploadPromises)
-
         //train the model
         console.log('Training initialized...')
         var trainingIteration=await trainer.trainProject(project.id)
@@ -77,35 +91,87 @@ app.get('/create-train-project', async (req,res)=>{
         //train to completion
         while(trainingIteration.status==="Training"){
             console.log(`Training status: ${trainingIteration.status}`)
-            await setTimeOutPromise(1000,null)
-            trainingIteration=await trainer.getIteration(project.id,trainingIteration.id)
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            const updatedIteration = await trainer.getIteration(projectID, trainingIteration.id);
+            if (updatedIteration.status !== "Training") {
+                console.log(`Training status: ${updatedIteration.status}`)
+                break;
+            }
         }
-
-        console.log(`Training status: ${trainingIteration.status}`)
 
         //publish current iteration
         // Publish the iteration to the end point
         await trainer.publishIteration(project.id, trainingIteration.id, publishIterationName, process.env.resourcePredictionID);
 
-        res.status(200).send(`<h1>Project grocery items created and trained.</h1> <br><br> <a href="/classify-image">Test Images</a>`)
+        res.status(200).redirect('/classify-image')
     } catch (e) {
         console.log('This error occurred: ',e)//remember to change this to default behaviour and not throw actual error
+        res.status(500).send('An error occurred during project creation and training.');
     }
 })
 
-app.get('/classify-image',async (req,res)=>{
-    const testFile = fs.readFileSync(`${rootImgFolder}/test/1.jpg`);
-
-    const results = await pred.classifyImage(projectID, publishIterationName, testFile);
-    let pred_results=[]
-    // Show results
-    console.log("Results:");
-    results.predictions.forEach(predictedResult => {
-        console.log(`\t ${predictedResult.tagName}: ${(predictedResult.probability * 100.0).toFixed(2)}%`);
-        pred_results.push(`${predictedResult.tagName}: ${(predictedResult.probability * 100.0).toFixed(2)}%`)
+//classify image
+app.get('/classify-image', (req,res)=>{
+    // Read the JSON file
+    fs.readFile('id.json', 'utf8', (err, data) => {
+        if (err) {
+            console.error(err);
+            return res.status(500).send('Error reading JSON file');
+        }
+        
+        const projectsData = JSON.parse(data);
+        let pred_results=[]
+        // Pass the projectsData to the EJS template
+        res.render('classify', { projects: projectsData.projects,pred_results:pred_results });
     });
+    
+})
+app.post('/classify-image',  upload.single('image'),async (req,res)=>{
+    try {
+        
+        // Check if a file was uploaded
+        if (!req.file) {
+            res.send('<p>Files Missing</p>');
+            return;
+        }
+        if(!req.body.projId){
+            res.send('<p>Project Id Missing</p>');
+            return;
+        }
+       // Read the uploaded image file
+        const fileimageBuffer = fs.readFileSync(req.file.path);
 
-    res.send(`<h1>Prediction Results:</h1><br><br>${pred_results}`)
+        const results = await pred.classifyImage(req.body.projId, publishIterationName, fileimageBuffer);
+        let pred_results=[]
+        let pred_val=0
+        // Show results
+        console.log("Results:");
+        results.predictions.forEach(predictedResult => {
+            console.log(`\t ${predictedResult.tagName}: ${(predictedResult.probability * 100.0).toFixed(2)}%`);
+            pred_results.push(`${predictedResult.tagName}: ${(predictedResult.probability * 100.0).toFixed(2)}%`)
+            pred_val=(predictedResult.probability * 100.0).toFixed(2)
+        });
+        fs.readFile('id.json', 'utf8', (err, data) => {
+            if (err) {
+                console.error(err);
+                return res.status(500).send('Error reading JSON file');
+            }
+            
+            const projectsData = JSON.parse(data);
+            if (pred_val>=50){
+                pred_val='Passed'
+            }
+            
+            // Pass the projectsData to the EJS template
+            res.render('classify', { projects: projectsData.projects,pred_results:pred_results,pred_val });
+        });
+
+        
+    } catch (e) {
+        console.error('Error:', e);
+        res.status(500).send('Error processing the image.');
+        
+    }
 })
 
 const PORT=process.env.PORT || 5003
