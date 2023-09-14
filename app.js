@@ -22,8 +22,18 @@ const trainer=new trainAPI.TrainingAPIClient(creds,trainer_endpoint)
 const pred_creds=new msREST.ApiKeyCredentials({inHeader:{'Prediction-key':process.env.resourcePredictionKEY}})
 const pred=new predAPI.PredictionAPIClient(pred_creds,pred_endpoint)
 const rootImgFolder='./public/images'
-const upload=multer({dest:'uploads/'})
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      cb(null, 'uploads/'); // Set the directory where uploaded files will be stored
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      cb(null, file.fieldname + '-' + uniqueSuffix + '.' + file.originalname.split('.').pop());
+    },
+});
+const upload=multer({dest:'uploads/',storage:storage})
 let projectID=''
+
 //create express app
 const app=express()
 
@@ -47,68 +57,74 @@ app.get('/create-train-project', (req,res)=>{
     res.render('create')
 })
 
-app.post('/create-train-project', async (req,res)=>{
-    
+app.post('/create-train-project',  upload.array('image', 10), async (req, res) => {
     try {
-        const myNewProjectName = req.body.projName;
-        const tag = req.body.projTag;
-        const imageFiles = req.files.image;
-        //import id json
-        const id_data=fs.readFileSync('id.json')
-         // Ensure that project name and tag are provided
-         if (!myNewProjectName || !tag || !imageFiles) {
-            return res.status(400).send('Project name, tag, and images are required.');
+      const myNewProjectName = req.body.projName;
+      const tag = req.body.projTag;
+      const imageFiles = req.files;
+  
+      // Import id json
+      const id_data = fs.readFileSync('id.json');
+      console.log(`Name: ${myNewProjectName}\nTag: ${tag}`);
+  
+      // Ensure that project name, tag, and images are provided
+      if (!myNewProjectName || !tag || !imageFiles) {
+        return res.status(400).send('Project name, tag, and images are required.');
+      }
+  
+      console.log(`Creating project...`);
+      const project = await trainer.createProject(myNewProjectName);
+      projectID = project.id;
+  
+      // after creating the project, save the ID to id.json
+      const idsJSON = JSON.parse(id_data);
+      idsJSON.projects.push({
+        projId: projectID,
+        projName: project.name,
+      });
+      fs.writeFileSync('id.json', JSON.stringify(idsJSON));
+  
+      // add tags for the pictures in the newly created project
+      const tagObj = await trainer.createTag(projectID, tag);
+  
+      // upload data images
+      console.log('Adding images...');
+  
+      // Process each uploaded image
+      for (const imageFile of imageFiles) {
+        const imageData = fs.readFileSync(imageFile.path);
+  
+        // Upload the image to the project with the specified tag
+        await trainer.createImagesFromData(projectID, imageData, { tagIds: [tagObj.id] });
+      }
+  
+      // train the model
+      console.log('Training initialized...');
+      var trainingIteration = await trainer.trainProject(project.id);
+      console.log('Training in progress...');
+  
+      // train to completion
+      while (trainingIteration.status === 'Training') {
+        console.log(`Training status: ${trainingIteration.status}`);
+        await setTimeOutPromise(1000);
+        const updatedIteration = await trainer.getIteration(projectID, trainingIteration.id);
+        if (updatedIteration.status !== 'Training') {
+          console.log(`Training status: ${updatedIteration.status}`);
+          break;
         }
-
-        console.log(`Creating project...`)
-        const project=await trainer.createProject(`${myNewProjectName}`)
-        projectID=project.id
-        //after creating project save id to id.json
-        const idsJSON=JSON.parse(id_data)
-        idsJSON.projects.push({
-            projId:projectID,
-            projName:project.name
-        })
-        fs.writeFileSync('id.json', JSON.stringify(idsJSON));
-        //add tags for the pictures in the newly created project
-        const tagObj = await trainer.createTag(projectID, tag);
-
-        //upload data images
-        console.log('Adding images...')
-
-        // Process each uploaded image
-        for (const imageFile of Array.isArray(imageFiles) ? imageFiles : [imageFiles]) {
-            const imageData = fs.readFileSync(imageFile.tempFilePath);
-
-            // Upload the image to the project with the specified tag
-            await trainer.createImagesFromData(projectID, imageData, { tagIds: [tagObj.id] });
-        }
-        
-        //train the model
-        console.log('Training initialized...')
-        var trainingIteration=await trainer.trainProject(project.id)
-        console.log('Training in progress...')
-        //train to completion
-        while(trainingIteration.status==="Training"){
-            console.log(`Training status: ${trainingIteration.status}`)
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            const updatedIteration = await trainer.getIteration(projectID, trainingIteration.id);
-            if (updatedIteration.status !== "Training") {
-                console.log(`Training status: ${updatedIteration.status}`)
-                break;
-            }
-        }
-
-        //publish current iteration
-        // Publish the iteration to the end point
-        await trainer.publishIteration(project.id, trainingIteration.id, publishIterationName, process.env.resourcePredictionID);
-
-        res.status(200).redirect('/classify-image')
+      }
+  
+      // publish current iteration
+      // Publish the iteration to the endpoint
+      await trainer.publishIteration(project.id, trainingIteration.id, publishIterationName, process.env.resourcePredictionID);
+  
+      res.status(200).redirect('/classify-image');
     } catch (e) {
-        console.log('This error occurred: ',e)//remember to change this to default behaviour and not throw actual error
-        res.status(500).send('An error occurred during project creation and training.');
+      console.log('This error occurred: ', e); // remember to change this to default behavior and not throw actual error
+      res.status(500).send('An error occurred during project creation and training.');
     }
-})
+  });
+  
 
 //classify image
 app.get('/classify-image', (req,res)=>{
@@ -156,7 +172,7 @@ app.post('/classify-image',  upload.single('image'),async (req,res)=>{
                 console.error(err);
                 return res.status(500).send('Error reading JSON file');
             }
-            
+  
             const projectsData = JSON.parse(data);
             if (pred_val>=50){
                 pred_val='Passed'
