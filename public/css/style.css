@@ -65,7 +65,7 @@
         border: none;
         padding: 10px;
         color: #fff;
-        background-color: rgb(1, 119, 187);
+        background-color: rgb(204, 58, 58);
     }
 
     .container form .field input[type="text"]{
@@ -84,7 +84,7 @@
         border: none;
         padding: 10px;
         color: #fff;
-        
+        background-color: rgb(204, 58, 58);
     }
 
     #image-showcase{
