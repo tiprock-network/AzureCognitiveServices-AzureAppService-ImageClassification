@@ -31,15 +31,16 @@ const storage = multer.diskStorage({
       cb(null, file.fieldname + '-' + uniqueSuffix + '.' + file.originalname.split('.').pop());
     },
 });
+
+//handles file uploads from the form
 const upload=multer({dest:'uploads/',storage:storage})
 let projectID=''
 
 //create express app
 const app=express()
 
-
-
 //middleware
+//set the view engine
 app.set('view engine','ejs')
 app.use(body_parser.urlencoded({extended:true}))
 //app.use(fileUpload({useTempFiles: true,}))
