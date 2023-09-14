@@ -84,7 +84,7 @@
         border: none;
         padding: 10px;
         color: #fff;
-        color: rgb(204, 58, 58);
+        
     }
 
     #image-showcase{
@@ -117,7 +117,7 @@
         font-family: 'Montserrat', sans-serif;
         font-size: 18px;
         color: #fff;
-        color: rgb(204, 58, 58);
+        background: rgb(204, 58, 58);
     }
     .layout button a{
         color: #fff;
@@ -129,5 +129,4 @@
         font-size: 18px;
         text-align: center;
         color: rgb(204, 58, 58);
-        
     }
