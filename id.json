@@ -1,1 +1,8 @@
-{"projects":[{"projId":"908401d9-1753-4329-8cc7-2616f0a4cd93","projName":"coffee-cups"},{"projId":"178d327f-1d50-4faf-a6ef-75cd7d120662","projName":"cup-classification"}]}
+{
+  "projects":[
+  {
+    "projId":"test-id",
+    "projName":"project-name"
+  }
+]
+}
